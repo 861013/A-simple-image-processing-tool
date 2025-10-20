@@ -282,7 +282,7 @@ tkinter-tooltip==2.0.0       # GUI工具提示
 ## 📞 联系方式
 
 如有问题或建议，请通过以下方式联系：
-- 项目地址：[https://github.com/IESTAR1013/A-simple-image-processing-tool]
+- 项目地址：[https://github.com/861013/A-simple-image-processing-tool]
 - 邮箱：[1076359033@qq,com]
 
 ---
