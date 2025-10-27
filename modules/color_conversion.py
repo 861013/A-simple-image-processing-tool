@@ -121,13 +121,15 @@ class ColorConversion(BaseImageProcessor):
             method (str): 转换方法 ('luminance', 'average', 'max', 'min')
             
         Returns:
-            numpy.ndarray: 灰度图像
+            numpy.ndarray: 灰度图像（3通道RGB格式，用于正确显示）
         """
         if image is None:
             return None
         
         if len(image.shape) == 2:
-            return image.copy()
+            # 已经是单通道灰度图，转换为3通道用于显示
+            gray_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            return gray_rgb
         
         if len(image.shape) == 3:
             if method == 'luminance':
@@ -145,7 +147,10 @@ class ColorConversion(BaseImageProcessor):
             else:
                 gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
             
-            return gray.astype(np.uint8)
+            gray = gray.astype(np.uint8)
+            # 将单通道灰度图转换为3通道RGB，以便正确显示
+            gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+            return gray_rgb
         
         return image
     
@@ -270,11 +275,27 @@ class ColorConversion(BaseImageProcessor):
         elif method == 'convert_color_space':
             target_space = kwargs.get('color_space', 'HSV')
             if target_space.upper() == 'HSV':
-                self.processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+                # 转换为HSV并映射为假彩色用于显示
+                hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+                # 将H通道扩展到0-255以便可视化
+                # S和V通道已经是0-255
+                hsv_vis = hsv.copy()
+                hsv_vis[:, :, 0] = hsv_vis[:, :, 0] * 2  # 0-179 -> 0-358，再clip到255
+                hsv_vis[:, :, 0] = np.clip(hsv_vis[:, :, 0], 0, 255)
+                self.processed_image = hsv_vis.astype(np.uint8)
             elif target_space.upper() == 'LAB':
-                self.processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                # LAB值域: L(0-100), A(-127-127), B(-127-127)
+                # 归一化到0-255以便显示
+                lab_vis = lab.copy().astype(np.float32)
+                lab_vis[:, :, 0] = lab_vis[:, :, 0] * 2.55  # L: 0-100 -> 0-255
+                lab_vis[:, :, 1] = (lab_vis[:, :, 1] + 127) * 255 / 254  # A: -127-127 -> 0-255
+                lab_vis[:, :, 2] = (lab_vis[:, :, 2] + 127) * 255 / 254  # B: -127-127 -> 0-255
+                self.processed_image = np.clip(lab_vis, 0, 255).astype(np.uint8)
             elif target_space.upper() == 'YUV':
-                self.processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2YUV)
+                yuv = cv2.cvtColor(image, cv2.COLOR_RGB2YUV)
+                # YUV值域接近0-255，直接使用
+                self.processed_image = yuv.astype(np.uint8)
             elif target_space.upper() == 'GRAY':
                 gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
                 self.processed_image = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)

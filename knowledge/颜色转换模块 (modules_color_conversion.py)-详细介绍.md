@@ -154,6 +154,12 @@ def convert_to_rgb(self, image, from_space='RGB'):
 - HSV到RGB的转换是RGB到HSV的逆过程
 - 需要处理色调的周期性
 
+**注意：HSV颜色空间可视化**
+- 在`process`方法中，HSV颜色空间会被正确可视化
+- HSV的H通道（0-179）会被扩展到0-255范围以便显示
+- S和V通道已经是0-255范围，可直接使用
+- 这样避免将HSV值错误地当作RGB值来显示，导致蓝绿色偏色问题
+
 ### 3. LAB颜色空间
 
 #### 数学原理
@@ -271,11 +277,23 @@ def convert_rgb_to_cmyk(self, rgb_image):
 #### 代码实现分析
 ```python
 def convert_to_grayscale(self, image, method='luminance'):
+    """
+    将图像转换为灰度图
+    
+    Args:
+        image (numpy.ndarray): 输入图像
+        method (str): 转换方法 ('luminance', 'average', 'max', 'min')
+        
+    Returns:
+        numpy.ndarray: 灰度图像（3通道RGB格式，用于正确显示）
+    """
     if image is None:
         return None
     
     if len(image.shape) == 2:
-        return image.copy()
+        # 已经是单通道灰度图，转换为3通道用于显示
+        gray_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        return gray_rgb
     
     if len(image.shape) == 3:
         if method == 'luminance':
@@ -293,15 +311,69 @@ def convert_to_grayscale(self, image, method='luminance'):
         else:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         
-        return gray.astype(np.uint8)
+        gray = gray.astype(np.uint8)
+        # 将单通道灰度图转换为3通道RGB，以便正确显示
+        gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        return gray_rgb
     
     return image
 ```
 
 **关键点分析：**
-- 提供多种灰度转换方法
-- 亮度公式最符合人眼感知
-- 使用`np.dot()`进行矩阵运算
+- 提供多种灰度转换方法（luminance、average、max、min）
+- **重要**：返回3通道RGB格式而非单通道，确保正确显示为黑白图像
+- 亮度公式（0.299×R + 0.587×G + 0.114×B）最符合人眼感知
+- 使用`np.dot()`进行高效的矩阵运算
+- 使用`cv2.cvtColor()`将单通道灰度图转换为3通道RGB格式
+
+#### 常见问题与修复
+
+**问题：转灰度后出现蓝绿色而非黑白**
+
+如果出现蓝绿色图像而不是正常的黑白图像，这是将HSV颜色空间错误地当作RGB显示导致的。
+
+**原因分析：**
+1. **HSV颜色空间的特性**：
+   - H (色相)：0-179 范围
+   - S (饱和度)：0-255 范围  
+   - V (明度)：0-255 范围
+
+2. **错误显示的过程**：
+   ```python
+   # 错误的做法
+   hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+   # 直接将HSV当作RGB显示 → 导致色偏
+   display(hsv)  # H值被当作红色，S值被当作绿色，V值被当作蓝色
+   ```
+
+3. **为什么是蓝绿色**：
+   - S值（饱和度）通常是高值（接近255）→ 被当作绿色通道 → 强烈的绿色
+   - V值（明度）也是高值 → 被当作蓝色通道 → 强烈的蓝色  
+   - 综合效果 → 蓝绿色调
+
+**修复方案：**
+```python
+def convert_to_grayscale(self, image, method='luminance'):
+    # ... 计算灰度值
+    gray = ...  # 单通道灰度图
+    
+    # 重要：转换为3通道RGB格式
+    gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    return gray_rgb  # 返回3通道图像，R=G=B，正确显示为灰色
+```
+
+**HSV颜色空间可视化修复：**
+```python
+# 在process方法中
+elif method == 'convert_color_space':
+    if target_space.upper() == 'HSV':
+        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        # 将H通道扩展到0-255以便可视化
+        hsv_vis = hsv.copy()
+        hsv_vis[:, :, 0] = hsv_vis[:, :, 0] * 2  # 0-179 -> 0-358 -> 0-255
+        hsv_vis[:, :, 0] = np.clip(hsv_vis[:, :, 0], 0, 255)
+        self.processed_image = hsv_vis.astype(np.uint8)
+```
 
 ### 7. 颜色增强
 
@@ -378,6 +450,26 @@ def process(self, method='convert_to_rgb', **kwargs):
     if method == 'convert_to_rgb':
         from_space = kwargs.get('from_space', 'RGB')
         self.processed_image = self.convert_to_rgb(image, from_space)
+    elif method == 'convert_to_grayscale':
+        gray_method = kwargs.get('gray_method', 'luminance')
+        self.processed_image = self.convert_to_grayscale(image, gray_method)
+    elif method == 'convert_color_space':
+        target_space = kwargs.get('color_space', 'HSV')
+        if target_space.upper() == 'HSV':
+            # 转换为HSV并映射为假彩色用于显示
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            hsv_vis = hsv.copy()
+            hsv_vis[:, :, 0] = np.clip(hsv_vis[:, :, 0] * 2, 0, 255)
+            self.processed_image = hsv_vis.astype(np.uint8)
+        elif target_space.upper() == 'LAB':
+            # LAB值域映射到0-255
+            lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+            lab_vis = lab.copy().astype(np.float32)
+            lab_vis[:, :, 0] = lab_vis[:, :, 0] * 2.55  # L: 0-100 -> 0-255
+            lab_vis[:, :, 1] = (lab_vis[:, :, 1] + 127) * 255 / 254  # A: -127-127 -> 0-255
+            lab_vis[:, :, 2] = (lab_vis[:, :, 2] + 127) * 255 / 254  # B: -127-127 -> 0-255
+            self.processed_image = np.clip(lab_vis, 0, 255).astype(np.uint8)
+        # ... 其他颜色空间
     # ... 其他方法
 ```
 
@@ -385,6 +477,7 @@ def process(self, method='convert_to_rgb', **kwargs):
 - 参数解包机制，支持灵活的参数传递
 - 错误处理机制，确保程序健壮性
 - 统一的返回接口
+- **重要**：颜色空间转换会正确映射值域，避免将非RGB颜色空间错误地当作RGB显示
 
 ### 使用的库和函数
 
@@ -566,6 +659,7 @@ def parallel_color_conversion(image, method='convert_to_rgb', **kwargs):
 ### 基础使用
 ```python
 from modules.color_conversion import ColorConversion
+import cv2
 
 # 创建处理器
 processor = ColorConversion()
@@ -573,11 +667,15 @@ processor = ColorConversion()
 # 加载图像
 processor.load_image("input.jpg")
 
+# 转灰度
+result = processor.process('convert_to_grayscale', gray_method='luminance')
+
 # RGB到HSV转换
-result = processor.process('convert_color_space', color_space='HSV')
+hsv_result = processor.process('convert_color_space', color_space='HSV')
 
 # 保存结果
-cv2.imwrite("output.jpg", result)
+cv2.imwrite("output_gray.jpg", result)  # 正确的黑白灰度图
+cv2.imwrite("output_hsv.jpg", hsv_result)  # 伪彩色HSV可视化
 ```
 
 ### 颜色空间对比实验
@@ -615,6 +713,9 @@ def compare_color_spaces():
 
 ### 灰度转换方法对比
 ```python
+import cv2
+import matplotlib.pyplot as plt
+
 def compare_grayscale_methods():
     processor = ColorConversion()
     processor.load_image("test_image.jpg")
@@ -625,6 +726,7 @@ def compare_grayscale_methods():
     results = []
     for method in methods:
         result = processor.process('convert_to_grayscale', gray_method=method)
+        # result 现在是3通道RGB格式
         results.append((result, method))
     
     # 显示对比结果
@@ -632,13 +734,22 @@ def compare_grayscale_methods():
     axes = axes.ravel()
     
     for i, (result, method) in enumerate(results):
-        axes[i].imshow(result, cmap='gray')
+        # 转换为RGB显示（因为matplotlib使用RGB顺序）
+        if len(result.shape) == 3:
+            axes[i].imshow(result)  # result已经是RGB格式
+        else:
+            axes[i].imshow(result, cmap='gray')
         axes[i].set_title(f"{method} 方法")
         axes[i].axis('off')
     
     plt.tight_layout()
     plt.show()
 ```
+
+**注意事项：**
+- `convert_to_grayscale` 返回的是3通道RGB格式的灰度图（R=G=B）
+- 这样可以正确显示为黑白图像
+- 如果使用matplotlib显示，可以直接使用`imshow(result)`，无需指定cmap
 
 ### 颜色增强实验
 ```python
@@ -753,6 +864,10 @@ def adaptive_color_processing(image, method='enhance_color'):
 3. **参数调优**：通过实验找到最佳参数组合
 4. **性能优化**：使用向量化操作、并行处理等技术提高效率
 5. **实际应用**：结合具体场景进行算法选择和参数调整
+6. **显示格式**：
+   - 灰度图返回3通道RGB格式（R=G=B），确保正确显示为黑白
+   - HSV/LAB等颜色空间需要值域映射和可视化处理
+   - 避免将非RGB颜色空间错误地当作RGB显示
 
 ### 颜色空间对比
 | 颜色空间 | 优点 | 缺点 | 适用场景 |
